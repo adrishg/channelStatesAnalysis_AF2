@@ -2,13 +2,14 @@ import math
 import re
 
 # Function to extract B-factors (which are pLDDT scores in AlphaFold models) from a PDB file
+# This function already correctly uses the chainID parameter.
 def extractBFactor(pdbFile, chainID):
     patternATOM = re.compile(
         r'^ATOM\s+'
         r'\d+\s+'
         r'CA\s+'
         r'([A-Z]{3})\s+'
-        + re.escape(chainID) +
+        + re.escape(chainID) +  # Chain ID is explicitly used here
         r'\s?(\d+)\s+'
         r'[-+]?\d*\.\d+\s+'
         r'[-+]?\d*\.\d+\s+'
@@ -61,11 +62,19 @@ extreme_sidechain_atoms = {
 }
 
 def parse_pdb(file_path):
+    """
+    Parses a PDB file and returns its lines.
+    """
     with open(file_path, 'r') as file:
         lines = file.readlines()
     return lines
 
 def get_atom_coordinates(lines, residue_type, residue_number, atom_name, chain=None):
+    """
+    Extracts the coordinates of a specific atom from a PDB file's lines,
+    optionally filtering by chain ID.
+    This function already correctly handles the 'chain' parameter.
+    """
     for line in lines:
         if line.startswith('ATOM') or line.startswith('HETATM'):
             atom_residue_type = line[17:20].strip()
@@ -88,33 +97,47 @@ def get_atom_coordinates(lines, residue_type, residue_number, atom_name, chain=N
                 except ValueError:
                     print(f"Error parsing coordinates for {residue_type}{residue_number} {atom_name}")
                     return None
-    print(f"Could not find {atom_name} atom for {residue_type} {residue_number}")
+    print(f"Could not find {atom_name} atom for {residue_type} {residue_number}" + (f" in chain {chain}" if chain else ""))
     return None
 
 
 def calculate_distance(coord1, coord2):
+    """
+    Calculates the Euclidean distance between two 3D coordinates.
+    """
     return math.sqrt(sum([(a - b) ** 2 for a, b in zip(coord1, coord2)]))
 
-def measure_distances(pdb_file, residue1_type, residue1_number, residue2_type, residue2_number):
+def measure_distances(pdb_file, residue1_type, residue1_number, residue2_type, residue2_number, chain=None):
+    """
+    Measures all atom-to-atom distances between two specified residues,
+    optionally within a given chain.
+    """
     lines = parse_pdb(pdb_file)
 
     distances = []
 
     for atom1 in sidechain_atoms[residue1_type]:
-        coord1 = get_atom_coordinates(lines, residue1_type, residue1_number, atom1)
+        # Pass the chain argument to get_atom_coordinates
+        coord1 = get_atom_coordinates(lines, residue1_type, residue1_number, atom1, chain)
         if coord1:
             for atom2 in sidechain_atoms[residue2_type]:
-                coord2 = get_atom_coordinates(lines, residue2_type, residue2_number, atom2)
+                # Pass the chain argument to get_atom_coordinates
+                coord2 = get_atom_coordinates(lines, residue2_type, residue2_number, atom2, chain)
                 if coord2:
                     distance = calculate_distance(coord1, coord2)
                     distances.append((distance, residue1_type, residue1_number, atom1, residue2_type, residue2_number, atom2))
-                    print(f"Distance between {residue1_type}{residue1_number} ({atom1}) and {residue2_type}{residue2_number} ({atom2}): {distance:.2f} Å")
+                    print(f"Distance between {residue1_type}{resid1_number} ({atom1})" +
+                          (f" in chain {chain}" if chain else "") +
+                          f" and {residue2_type}{residue2_number} ({atom2})" +
+                          (f" in chain {chain}" if chain else "") +
+                          f": {distance:.2f} Å")
 
     return distances
 
 def measure_ca_distances(pdb_file, residue_pairs, chain=None):
     """
     Measures the distances between the CA atoms of the provided residue pairs, optionally by chain.
+    This function already correctly handles the 'chain' parameter.
     
     Parameters:
     pdb_file (str): The path to the PDB file.
@@ -134,6 +157,7 @@ def measure_ca_distances(pdb_file, residue_pairs, chain=None):
 
     # Iterate over the residue pairs and calculate distances
     for residue1_type, residue1_number, residue2_type, residue2_number in residue_pairs:
+        # Pass the chain argument to get_atom_coordinates
         coord1 = get_atom_coordinates(lines, residue1_type, residue1_number, 'CA', chain)
         coord2 = get_atom_coordinates(lines, residue2_type, residue2_number, 'CA', chain)
         
@@ -143,32 +167,39 @@ def measure_ca_distances(pdb_file, residue_pairs, chain=None):
             residue_pairs_distances[pair_key] = dist
             print(f"{pair_key}: Distance = {dist:.2f} Å")
         else:
-            print(f"Could not find CA atom for one or both residues in pair: {residue1_type}{residue1_number}, {residue2_type}{residue2_number}")
+            print(f"Could not find CA atom for one or both residues in pair: {residue1_type}{residue1_number}, {residue2_type}{residue2_number}" +
+                  (f" in chain {chain}" if chain else ""))
 
     return residue_pairs_distances
 
 
-#Very similar to measure_(all)distances but in theory should be faster because only iterate on the tips of aas
-def measure_extreme_distances(pdb_file, residue1_type, residue1_number, residue2_type, residue2_number):
+# Very similar to measure_(all)distances but in theory should be faster because only iterate on the tips of aas
+def measure_extreme_distances(pdb_file, residue1_type, residue1_number, residue2_type, residue2_number, chain=None):
+    """
+    Measures distances between extreme side chain atoms of two residues,
+    optionally within a given chain.
+    """
     lines = parse_pdb(pdb_file)
 
     distances = []
 
     for atom1 in extreme_sidechain_atoms[residue1_type]:
-        coord1 = get_atom_coordinates(lines, residue1_type, residue1_number, atom1)
+        # Pass the chain argument to get_atom_coordinates
+        coord1 = get_atom_coordinates(lines, residue1_type, residue1_number, atom1, chain)
         if coord1:
             for atom2 in extreme_sidechain_atoms[residue2_type]:
-                coord2 = get_atom_coordinates(lines, residue2_type, residue2_number, atom2)
+                # Pass the chain argument to get_atom_coordinates
+                coord2 = get_atom_coordinates(lines, residue2_type, residue2_number, atom2, chain)
                 if coord2:
                     distance = calculate_distance(coord1, coord2)
                     distances.append((distance, residue1_type, residue1_number, atom1, residue2_type, residue2_number, atom2))
 
     return distances
 
-def measure_shortest_distance(pdb_file, residue1_type, residue1_number, residue2_type, residue2_number):
+def measure_shortest_distance(pdb_file, residue1_type, residue1_number, residue2_type, residue2_number, chain=None):
     """
-    Measures the shortest distance between extreme atoms of two residues and returns the formatted string 
-    with the residue and atom information.
+    Measures the shortest distance between extreme atoms of two residues and returns the formatted string
+    with the residue and atom information, optionally within a given chain.
     
     Parameters:
     pdb_file (str): The path to the PDB file.
@@ -176,12 +207,14 @@ def measure_shortest_distance(pdb_file, residue1_type, residue1_number, residue2
     residue1_number (int): The residue number of the first residue.
     residue2_type (str): The residue type of the second residue (e.g., 'ARG').
     residue2_number (int): The residue number of the second residue.
+    chain (str): The chain identifier (optional). If not provided, it will consider all chains.
     
     Returns:
     str: A formatted string with the shortest distance in the format "RESNUM_ATOM".
     """
     
-    distances = measure_extreme_distances(pdb_file, residue1_type, residue1_number, residue2_type, residue2_number)
+    # Pass the chain argument to measure_extreme_distances
+    distances = measure_extreme_distances(pdb_file, residue1_type, residue1_number, residue2_type, residue2_number, chain)
     if distances:
         # Find the shortest distance
         shortest_distance = min(distances, key=lambda x: x[0])
@@ -195,21 +228,23 @@ def measure_shortest_distance(pdb_file, residue1_type, residue1_number, residue2
         distance = round(distance, 1)
         
         # Print and return the formatted result
-        print(f"\nShortest distance between {res1_atom} and {res2_atom}: {distance:.1f} Å")
+        print(f"\nShortest distance between {res1_atom} and {res2_atom}: {distance:.1f} Å" +
+              (f" in chain {chain}" if chain else ""))
         
         return f"{res1_atom}-{res2_atom}: {distance:.1f} Å"
     else:
-        print("Could not find specified atoms in the PDB file.")
+        print("Could not find specified atoms in the PDB file." + (f" for chain {chain}" if chain else ""))
         return None  # Return None if no distance is found
 
 def calculate_area_from_residues_with_chain(pdb_file, residues, chain=None):
     """
     Calculates the area formed by connecting the C-alpha atoms of the provided residues, optionally by chain.
+    This function already correctly handles the 'chain' parameter.
     
     Parameters:
     pdb_file (str): The path to the PDB file.
     residues (list of tuples): A list of tuples where each tuple contains the residue type and residue number.
-                               Example: [('ARG', 10), ('GLU', 20), ('SER', 30)]
+                                Example: [('ARG', 10), ('GLU', 20), ('SER', 30)]
     chain (str): The chain identifier (optional). If not provided, it will assume all residues are in the same chain.
     
     Returns:
@@ -221,6 +256,7 @@ def calculate_area_from_residues_with_chain(pdb_file, residues, chain=None):
 
     # Extract the CA coordinates for each residue
     for residue_type, residue_number in residues:
+        # Pass the chain argument to get_atom_coordinates
         coord = get_atom_coordinates(lines, residue_type, residue_number, 'CA', chain)
         if coord:
             ca_coords.append((residue_type, residue_number, coord))
@@ -248,10 +284,10 @@ def calculate_area_from_residues_with_chain(pdb_file, residues, chain=None):
 
         print(f"{res1[0]}{res1[1]} (CA: {res1[2]}) to {res2[0]}{res2[1]} (CA: {res2[2]}): Distance = {dist:.2f} Å")
 
-    #Project the 3D coordinates onto a 2D plane (ignoring z-coordinate)
+    # Project the 3D coordinates onto a 2D plane (ignoring z-coordinate)
     projected_coords = [(coord[0], coord[1]) for _, _, coord in ca_coords]
 
-    #Calculate the area using the Shoelace's formula
+    # Calculate the area using the Shoelace's formula
     n = len(projected_coords)
     area = 0
 
@@ -262,19 +298,20 @@ def calculate_area_from_residues_with_chain(pdb_file, residues, chain=None):
 
     area = abs(area) / 2.0
 
-    print(f"\nArea formed by the residues: {area:.2f} square Å")
+    print(f"\nArea formed by the residues: {area:.2f} square Å" + (f" in chain {chain}" if chain else ""))
     
     return residue_pairs_distances, area
 
-#CORRECTION: previous version of area vas considering tips
+# CORRECTION: previous version of area vas considering tips
 def calculate_area_from_ca_distances(pdb_file, residues, chain=None):
     """
     Calculates the area formed by connecting the C-alpha atoms of the provided residues, optionally by chain.
+    This function already correctly handles the 'chain' parameter.
     
     Parameters:
     pdb_file (str): The path to the PDB file.
     residues (list of tuples): A list of tuples where each tuple contains the residue type and residue number.
-                               Example: [('ARG', 10), ('GLU', 20), ('SER', 30)]
+                                Example: [('ARG', 10), ('GLU', 20), ('SER', 30)]
     chain (str): The chain identifier (optional). If not provided, it will assume all residues are in the same chain.
     
     Returns:
@@ -286,6 +323,7 @@ def calculate_area_from_ca_distances(pdb_file, residues, chain=None):
 
     # Extract the CA coordinates for each residue
     for residue_type, residue_number in residues:
+        # Pass the chain argument to get_atom_coordinates
         coord = get_atom_coordinates(lines, residue_type, residue_number, 'CA', chain)
         if coord:
             ca_coords.append((residue_type, residue_number, coord))
@@ -327,7 +365,6 @@ def calculate_area_from_ca_distances(pdb_file, residues, chain=None):
 
     area = abs(area) / 2.0
 
-    print(f"\nArea formed by the residues: {area:.2f} square Å")
+    print(f"\nArea formed by the residues: {area:.2f} square Å" + (f" in chain {chain}" if chain else ""))
     
     return residue_pairs_distances, area
-
