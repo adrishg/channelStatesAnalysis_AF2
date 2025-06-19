@@ -1,5 +1,6 @@
 import math
 import re
+import os # Added for os.path.exists check
 
 # Function to extract B-factors (which are pLDDT scores in AlphaFold models) from a PDB file
 # This function already correctly uses the chainID parameter.
@@ -126,7 +127,7 @@ def measure_distances(pdb_file, residue1_type, residue1_number, residue2_type, r
                 if coord2:
                     distance = calculate_distance(coord1, coord2)
                     distances.append((distance, residue1_type, residue1_number, atom1, residue2_type, residue2_number, atom2))
-                    print(f"Distance between {residue1_type}{resid1_number} ({atom1})" +
+                    print(f"Distance between {residue1_type}{residue1_number} ({atom1})" + # Corrected variable name here: residue1_number
                           (f" in chain {chain}" if chain else "") +
                           f" and {residue2_type}{residue2_number} ({atom2})" +
                           (f" in chain {chain}" if chain else "") +
@@ -368,3 +369,100 @@ def calculate_area_from_ca_distances(pdb_file, residues, chain=None):
     print(f"\nArea formed by the residues: {area:.2f} square Å" + (f" in chain {chain}" if chain else ""))
     
     return residue_pairs_distances, area
+
+
+def check_residue_atom_existence(pdb_file, distance_pairs, chain=None):
+    """
+    Checks if all residues and their specified atoms (CA for CA distances, extreme side chain
+    atoms for shortest distances) exist in the PDB file for the given chain.
+
+    Parameters:
+    pdb_file (str): The path to the PDB file.
+    distance_pairs (list of tuples): A list of tuples, where each tuple represents a pair
+                                      for distance calculation.
+                                      Format for CA distance: ('RES1_TYPE', RES1_NUM, 'RES2_TYPE', RES2_NUM)
+                                      Format for shortest distance: ('RES1_TYPE', RES1_NUM, 'RES2_TYPE', RES2_NUM)
+    chain (str): The chain identifier (optional).
+
+    Returns:
+    bool: True if all residues and atoms exist, False otherwise.
+    """
+    if not os.path.exists(pdb_file):
+        print(f"Error: PDB file '{pdb_file}' not found.")
+        return False
+
+    lines = parse_pdb(pdb_file)
+    all_ok = True
+
+    print(f"\n--- Running PDB existence check for {pdb_file} (Chain: {chain if chain else 'All'}) ---")
+
+    # Keep track of checked residues/atoms to avoid redundant messages
+    checked_items = set()
+
+    for pair in distance_pairs:
+        # Assuming the input format for distance_pairs is consistent with
+        # measure_ca_distances and measure_shortest_distance, which take
+        # (res1_type, res1_num, res2_type, res2_num).
+        # We need to distinguish if it's a CA distance check or a shortest distance check.
+        # For simplicity, we'll check both CA and extreme atoms if the function is generic.
+        # A more robust solution might require passing a 'type' for each pair.
+        # For now, let's check for CA and extreme atoms for each residue.
+
+        res1_type, res1_num, res2_type, res2_num = pair
+
+        # Check for first residue's CA atom
+        item_key_1_ca = (res1_type, res1_num, 'CA', chain)
+        if item_key_1_ca not in checked_items:
+            coord1_ca = get_atom_coordinates(lines, res1_type, res1_num, 'CA', chain)
+            if coord1_ca is None:
+                print(f"Error: Residue {res1_type}{res1_num} CA atom not found in PDB file '{pdb_file}'" +
+                      (f" for chain '{chain}'" if chain else ""))
+                all_ok = False
+            checked_items.add(item_key_1_ca)
+
+        # Check for second residue's CA atom
+        item_key_2_ca = (res2_type, res2_num, 'CA', chain)
+        if item_key_2_ca not in checked_items:
+            coord2_ca = get_atom_coordinates(lines, res2_type, res2_num, 'CA', chain)
+            if coord2_ca is None:
+                print(f"Error: Residue {res2_type}{res2_num} CA atom not found in PDB file '{pdb_file}'" +
+                      (f" for chain '{chain}'" if chain else ""))
+                all_ok = False
+            checked_items.add(item_key_2_ca)
+
+        # Check for first residue's extreme side chain atoms
+        if res1_type in extreme_sidechain_atoms:
+            for atom1 in extreme_sidechain_atoms[res1_type]:
+                item_key_1_extreme = (res1_type, res1_num, atom1, chain)
+                if item_key_1_extreme not in checked_items:
+                    coord1_extreme = get_atom_coordinates(lines, res1_type, res1_num, atom1, chain)
+                    if coord1_extreme is None:
+                        print(f"Warning: Residue {res1_type}{res1_num} extreme atom '{atom1}' not found in PDB file '{pdb_file}'" +
+                              (f" for chain '{chain}'" if chain else ""))
+                        # Note: This is a warning, as shortest distance might still work with other extreme atoms
+                    checked_items.add(item_key_1_extreme)
+        else:
+            print(f"Warning: Extreme side chain atoms not defined for residue type {res1_type}.")
+
+
+        # Check for second residue's extreme side chain atoms
+        if res2_type in extreme_sidechain_atoms:
+            for atom2 in extreme_sidechain_atoms[res2_type]:
+                item_key_2_extreme = (res2_type, res2_num, atom2, chain)
+                if item_key_2_extreme not in checked_items:
+                    coord2_extreme = get_atom_coordinates(lines, res2_type, res2_num, atom2, chain)
+                    if coord2_extreme is None:
+                        print(f"Warning: Residue {res2_type}{res2_num} extreme atom '{atom2}' not found in PDB file '{pdb_file}'" +
+                              (f" for chain '{chain}'" if chain else ""))
+                        # Note: This is a warning
+                    checked_items.add(item_key_2_extreme)
+        else:
+            print(f"Warning: Extreme side chain atoms not defined for residue type {res2_type}.")
+
+
+    if all_ok:
+        print(f"All specified residues and CA atoms found in '{pdb_file}'. Proceeding with calculations.")
+    else:
+        print(f"Errors detected in '{pdb_file}'. Please revise your input or PDB file.")
+
+    return all_ok
